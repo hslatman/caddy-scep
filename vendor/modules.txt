@@ -116,6 +116,13 @@ github.com/dlclark/regexp2/syntax
 github.com/dustin/go-humanize
 # github.com/go-chi/chi v4.1.2+incompatible
 github.com/go-chi/chi
+# github.com/go-kit/kit v0.10.0
+github.com/go-kit/kit/endpoint
+github.com/go-kit/kit/log
+github.com/go-kit/kit/transport
+github.com/go-kit/kit/transport/http
+# github.com/go-logfmt/logfmt v0.5.0
+github.com/go-logfmt/logfmt
 # github.com/go-sql-driver/mysql v1.5.0
 github.com/go-sql-driver/mysql
 # github.com/golang/protobuf v1.4.3
@@ -214,6 +221,12 @@ github.com/matttproud/golang_protobuf_extensions/pbutil
 # github.com/mholt/acmez v0.1.1
 github.com/mholt/acmez
 github.com/mholt/acmez/acme
+# github.com/micromdm/scep v1.0.0
+## explicit
+github.com/micromdm/scep/depot
+github.com/micromdm/scep/scep
+github.com/micromdm/scep/scep/internal/pkcs7
+github.com/micromdm/scep/server
 # github.com/miekg/dns v1.1.30
 github.com/miekg/dns
 # github.com/mitchellh/copystructure v1.0.0
@@ -320,6 +333,7 @@ go.uber.org/atomic
 # go.uber.org/multierr v1.5.0
 go.uber.org/multierr
 # go.uber.org/zap v1.16.0
+## explicit
 go.uber.org/zap
 go.uber.org/zap/buffer
 go.uber.org/zap/internal/bufferpool
@@ -347,6 +361,7 @@ golang.org/x/crypto/ssh/internal/bcrypt_pbkdf
 golang.org/x/crypto/ssh/terminal
 # golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
 golang.org/x/net/bpf
+golang.org/x/net/context
 golang.org/x/net/html
 golang.org/x/net/html/atom
 golang.org/x/net/http/httpguts

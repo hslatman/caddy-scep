@@ -30,6 +30,9 @@
                 ],
                 "handle": [
                   {
+                    "handler": "scep"
+                  },
+                  {
                     "handler": "static_response",
                     "status_code": "200",
                     "body": "Hello World!"
