@@ -14,10 +14,13 @@
         "http_port": 9080,
         "https_port": 9443,
         "servers": {
-          "server1": {
+          "scep": {
             "listen": [
-              "127.0.0.1:9443"
+              "127.0.0.1:9080"
             ],
+            "automatic_https": {
+              "disable_redirects": true
+            },
             "routes": [
               {
                 "group": "example",
@@ -31,7 +34,29 @@
                 "handle": [
                   {
                     "handler": "scep"
-                  },
+                  }
+                ]
+              }
+            ]
+          },
+          "server1": {
+            "listen": [
+              "127.0.0.1:9443"
+            ],
+            "automatic_https": {
+              "disable_redirects": true
+            },
+            "routes": [
+              {
+                "group": "example",
+                "match": [
+                  {
+                    "path": [
+                      "/*"
+                    ]
+                  }
+                ],
+                "handle": [
                   {
                     "handler": "static_response",
                     "status_code": "200",
@@ -56,9 +81,10 @@
           "policies": [
             {
               "subjects": ["localhost"],
-              "issuer":{
+              "issuers": [{
                 "module": "internal"
-              }
+              }],
+              "on_demand": true
             }
           ]
         }

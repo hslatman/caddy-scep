@@ -133,34 +133,48 @@ func encodeLength(out *bytes.Buffer, length int) (err error) {
 }
 
 func readObject(ber []byte, offset int) (asn1Object, int, error) {
-	//fmt.Printf("\n====> Starting readObject at offset: %d\n\n", offset)
+	berLen := len(ber)
+	if offset >= berLen {
+		return nil, 0, errors.New("ber2der: offset is after end of ber data")
+	}
 	tagStart := offset
 	b := ber[offset]
 	offset++
+	if offset >= berLen {
+		return nil, 0, errors.New("ber2der: cannot move offset forward, end of ber data reached")
+	}
 	tag := b & 0x1F // last 5 bits
 	if tag == 0x1F {
 		tag = 0
 		for ber[offset] >= 0x80 {
 			tag = tag*128 + ber[offset] - 0x80
 			offset++
+			if offset > berLen {
+				return nil, 0, errors.New("ber2der: cannot move offset forward, end of ber data reached")
+			}
 		}
-		tag = tag*128 + ber[offset] - 0x80
+		// jvehent 20170227: this doesn't appear to be used anywhere...
+		//tag = tag*128 + ber[offset] - 0x80
 		offset++
+		if offset > berLen {
+			return nil, 0, errors.New("ber2der: cannot move offset forward, end of ber data reached")
+		}
 	}
 	tagEnd := offset
 
 	kind := b & 0x20
-	/*
-		if kind == 0 {
-			fmt.Print("--> Primitive\n")
-		} else {
-			fmt.Print("--> Constructed\n")
-		}
-	*/
+	if kind == 0 {
+		debugprint("--> Primitive\n")
+	} else {
+		debugprint("--> Constructed\n")
+	}
 	// read length
 	var length int
 	l := ber[offset]
 	offset++
+	if offset > berLen {
+		return nil, 0, errors.New("ber2der: cannot move offset forward, end of ber data reached")
+	}
 	hack := 0
 	if l > 0x80 {
 		numberOfBytes := (int)(l & 0x7F)
@@ -170,14 +184,17 @@ func readObject(ber []byte, offset int) (asn1Object, int, error) {
 		if numberOfBytes == 4 && (int)(ber[offset]) > 0x7F {
 			return nil, 0, errors.New("ber2der: BER tag length is negative")
 		}
-		if 0x0 == (int)(ber[offset]) {
+		if (int)(ber[offset]) == 0x0 {
 			return nil, 0, errors.New("ber2der: BER tag length has leading zero")
 		}
-		//fmt.Printf("--> (compute length) indicator byte: %x\n", l)
-		//fmt.Printf("--> (compute length) length bytes: % X\n", ber[offset:offset+numberOfBytes])
+		debugprint("--> (compute length) indicator byte: %x\n", l)
+		debugprint("--> (compute length) length bytes: % X\n", ber[offset:offset+numberOfBytes])
 		for i := 0; i < numberOfBytes; i++ {
 			length = length*256 + (int)(ber[offset])
 			offset++
+			if offset > berLen {
+				return nil, 0, errors.New("ber2der: cannot move offset forward, end of ber data reached")
+			}
 		}
 	} else if l == 0x80 {
 		// find length by searching content
@@ -187,19 +204,21 @@ func readObject(ber []byte, offset int) (asn1Object, int, error) {
 		}
 		length = markerIndex
 		hack = 2
-		//fmt.Printf("--> (compute length) marker found at offset: %d\n", markerIndex+offset)
+		debugprint("--> (compute length) marker found at offset: %d\n", markerIndex+offset)
 	} else {
 		length = (int)(l)
 	}
-
+	if length < 0 {
+		return nil, 0, errors.New("ber2der: invalid negative value found in BER tag length")
+	}
 	//fmt.Printf("--> length        : %d\n", length)
 	contentEnd := offset + length
 	if contentEnd > len(ber) {
 		return nil, 0, errors.New("ber2der: BER tag length is more than available data")
 	}
-	//fmt.Printf("--> content start : %d\n", offset)
-	//fmt.Printf("--> content end   : %d\n", contentEnd)
-	//fmt.Printf("--> content       : % X\n", ber[offset:contentEnd])
+	debugprint("--> content start : %d\n", offset)
+	debugprint("--> content end   : %d\n", contentEnd)
+	debugprint("--> content       : % X\n", ber[offset:contentEnd])
 	var obj asn1Object
 	if kind == 0 {
 		obj = asn1Primitive{
@@ -225,4 +244,8 @@ func readObject(ber []byte, offset int) (asn1Object, int, error) {
 	}
 
 	return obj, contentEnd + hack, nil
+}
+
+func debugprint(format string, a ...interface{}) {
+	//fmt.Printf(format, a)
 }

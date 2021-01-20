@@ -1,6 +1,7 @@
 package scepserver
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha1"
@@ -10,9 +11,11 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/go-kit/kit/log"
+	"github.com/micromdm/scep/challenge"
+	"github.com/micromdm/scep/csrverifier"
 	"github.com/micromdm/scep/depot"
 	"github.com/micromdm/scep/scep"
-	"golang.org/x/net/context"
 )
 
 // Service is the interface for all supported SCEP server operations.
@@ -37,22 +40,37 @@ type Service interface {
 }
 
 type service struct {
-	depot             depot.Depot
-	ca                []*x509.Certificate // CA cert or chain
-	caKey             *rsa.PrivateKey
-	caKeyPassword     []byte
-	csrTemplate       *x509.Certificate
-	challengePassword string
-	allowRenewal      int // days before expiry, 0 to disable
-	clientValidity    int // client cert validity in days
+	depot                   depot.Depot
+	ca                      []*x509.Certificate // CA cert or chain
+	caKey                   *rsa.PrivateKey
+	caKeyPassword           []byte
+	csrTemplate             *x509.Certificate
+	challengePassword       string
+	supportDynamciChallenge bool
+	dynamicChallengeStore   challenge.Store
+	csrVerifier             csrverifier.CSRVerifier
+	allowRenewal            int // days before expiry, 0 to disable
+	clientValidity          int // client cert validity in days
+
+	/// info logging is implemented in the service middleware layer.
+	debugLogger log.Logger
 }
 
-func (svc service) GetCACaps(ctx context.Context) ([]byte, error) {
-	defaultCaps := []byte("SHA-1\nPOSTPKIOperation")
+// SCEPChallenge returns a brand new, random dynamic challenge.
+func (svc *service) SCEPChallenge() (string, error) {
+	if !svc.supportDynamciChallenge {
+		return svc.challengePassword, nil
+	}
+
+	return svc.dynamicChallengeStore.SCEPChallenge()
+}
+
+func (svc *service) GetCACaps(ctx context.Context) ([]byte, error) {
+	defaultCaps := []byte("Renewal\nSHA-1\nSHA-256\nAES\nDES3\nSCEPStandard\nPOSTPKIOperation")
 	return defaultCaps, nil
 }
 
-func (svc service) GetCACert(ctx context.Context) ([]byte, int, error) {
+func (svc *service) GetCACert(ctx context.Context) ([]byte, int, error) {
 	if len(svc.ca) == 0 {
 		return nil, 0, errors.New("missing CA Cert")
 	}
@@ -63,8 +81,8 @@ func (svc service) GetCACert(ctx context.Context) ([]byte, int, error) {
 	return data, len(svc.ca), err
 }
 
-func (svc service) PKIOperation(ctx context.Context, data []byte) ([]byte, error) {
-	msg, err := scep.ParsePKIMessage(data)
+func (svc *service) PKIOperation(ctx context.Context, data []byte) ([]byte, error) {
+	msg, err := scep.ParsePKIMessage(data, scep.WithLogger(svc.debugLogger))
 	if err != nil {
 		return nil, err
 	}
@@ -75,8 +93,30 @@ func (svc service) PKIOperation(ctx context.Context, data []byte) ([]byte, error
 
 	// validate challenge passwords
 	if msg.MessageType == scep.PKCSReq {
-		if !svc.challengePasswordMatch(msg.CSRReqMessage.ChallengePassword) {
-			return nil, errors.New("scep challenge password does not match")
+		CSRIsValid := false
+
+		if svc.csrVerifier != nil {
+			result, err := svc.csrVerifier.Verify(msg.CSRReqMessage.RawDecrypted)
+			if err != nil {
+				return nil, err
+			}
+			CSRIsValid = result
+			if !CSRIsValid {
+				svc.debugLogger.Log("err", "CSR is not valid")
+			}
+		} else {
+			CSRIsValid = svc.challengePasswordMatch(msg.CSRReqMessage.ChallengePassword)
+			if !CSRIsValid {
+				svc.debugLogger.Log("err", "scep challenge password does not match")
+			}
+		}
+
+		if !CSRIsValid {
+			certRep, err := msg.Fail(ca, svc.caKey, scep.BadRequest)
+			if err != nil {
+				return nil, err
+			}
+			return certRep.Raw, nil
 		}
 	}
 
@@ -104,6 +144,8 @@ func (svc service) PKIOperation(ctx context.Context, data []byte) ([]byte, error
 		ExtKeyUsage: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageClientAuth,
 		},
+		SignatureAlgorithm: csr.SignatureAlgorithm,
+		EmailAddresses:     csr.EmailAddresses,
 	}
 
 	certRep, err := msg.SignCSR(ca, svc.caKey, tmpl)
@@ -117,7 +159,7 @@ func (svc service) PKIOperation(ctx context.Context, data []byte) ([]byte, error
 	// Test if this certificate is already in the CADB, revoke if needed
 	// revocation is done if the validity of the existing certificate is
 	// less than allowRenewal (14 days by default)
-	err = svc.depot.HasCN(name, svc.allowRenewal, crt, false)
+	_, err = svc.depot.HasCN(name, svc.allowRenewal, crt, false)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +169,6 @@ func (svc service) PKIOperation(ctx context.Context, data []byte) ([]byte, error
 	}
 
 	return certRep.Raw, nil
-
 }
 
 func certName(crt *x509.Certificate) string {
@@ -137,23 +178,42 @@ func certName(crt *x509.Certificate) string {
 	return string(crt.Signature)
 }
 
-func (svc service) GetNextCACert(ctx context.Context) ([]byte, error) {
+func (svc *service) GetNextCACert(ctx context.Context) ([]byte, error) {
 	panic("not implemented")
 }
 
-func (svc service) challengePasswordMatch(pw string) bool {
-	if svc.challengePassword == "" {
+func (svc *service) challengePasswordMatch(pw string) bool {
+	if svc.challengePassword == "" && !svc.supportDynamciChallenge {
 		// empty password, don't validate
 		return true
 	}
-	if svc.challengePassword == pw {
+	if !svc.supportDynamciChallenge && svc.challengePassword == pw {
 		return true
 	}
+
+	if svc.supportDynamciChallenge {
+		valid, err := svc.dynamicChallengeStore.HasChallenge(pw)
+		if err != nil {
+			svc.debugLogger.Log(err)
+			return false
+		}
+		return valid
+	}
+
 	return false
 }
 
 // ServiceOption is a server configuration option
 type ServiceOption func(*service) error
+
+// WithCSRVerifier is an option argument to NewService
+// which allows setting a CSR verifier.
+func WithCSRVerifier(csrVerifier csrverifier.CSRVerifier) ServiceOption {
+	return func(s *service) error {
+		s.csrVerifier = csrVerifier
+		return nil
+	}
+}
 
 // ChallengePassword is an optional argument to NewService
 // which allows setting a preshared key for SCEP.
@@ -189,10 +249,28 @@ func ClientValidity(duration int) ServiceOption {
 	}
 }
 
+// WithLogger configures a logger for the SCEP Service.
+// By default, a no-op logger is used.
+func WithLogger(logger log.Logger) ServiceOption {
+	return func(s *service) error {
+		s.debugLogger = logger
+		return nil
+	}
+}
+
+func WithDynamicChallenges(cache challenge.Store) ServiceOption {
+	return func(s *service) error {
+		s.supportDynamciChallenge = true
+		s.dynamicChallengeStore = cache
+		return nil
+	}
+}
+
 // NewService creates a new scep service
 func NewService(depot depot.Depot, opts ...ServiceOption) (Service, error) {
 	s := &service{
-		depot: depot,
+		depot:       depot,
+		debugLogger: log.NewNopLogger(),
 	}
 	for _, opt := range opts {
 		if err := opt(s); err != nil {
