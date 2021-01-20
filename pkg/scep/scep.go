@@ -52,6 +52,9 @@ type Handler struct {
 
 	logger  *zap.Logger
 	handler http.Handler
+
+	privKey *rsa.PrivateKey
+	cert    *x509.Certificate
 }
 
 // CaddyModule returns the Caddy module information.
@@ -84,7 +87,10 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 
 	fmt.Println(ca)
 
-	depot, err := NewCaddyDepot(ca)
+	logger := log.NewJSONLogger(os.Stderr)
+	debug := level.Debug(logger)
+
+	depot, err := NewCaddyDepot(h, ca)
 	if err != nil {
 		return err
 	}
@@ -96,6 +102,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		scepserver.AllowRenewal(14),   // 14 days
 		scepserver.ClientValidity(60), // 60 days
 		// scepserver.WithLogger(logger),
+		scepserver.WithLogger(debug),
 	}
 
 	fmt.Println(svcOptions)
@@ -106,6 +113,8 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		return err
 	}
 
+	svc = scepserver.NewLoggingService(log.With(debug, "component", "scep_service"), svc)
+
 	fmt.Println(svc)
 	//svc = scepserver.NewLoggingService(log.With(lginfo, "component", "scep_service"), svc)
 
@@ -114,9 +123,6 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	e := scepserver.MakeServerEndpoints(svc)
 
 	fmt.Println(e)
-
-	logger := log.NewJSONLogger(os.Stderr)
-	debug := level.Debug(logger)
 
 	e.GetEndpoint = scepserver.EndpointLoggingMiddleware(debug)(e.GetEndpoint)
 	e.PostEndpoint = scepserver.EndpointLoggingMiddleware(debug)(e.PostEndpoint)
@@ -188,16 +194,21 @@ func (h Handler) Cleanup() error {
 }
 
 type CaddyDepot struct {
+	h  *Handler
 	ca *caddypki.CA
 }
 
-func NewCaddyDepot(ca *caddypki.CA) (*CaddyDepot, error) {
+func NewCaddyDepot(h *Handler, ca *caddypki.CA) (*CaddyDepot, error) {
 	return &CaddyDepot{
+		h:  h,
 		ca: ca,
 	}, nil
 }
 
 func (cd *CaddyDepot) CA(pass []byte) ([]*x509.Certificate, *rsa.PrivateKey, error) {
+
+	// NOTE: this seems to be called at the start of the program
+
 	fmt.Println("ca")
 
 	rootCert := cd.ca.RootCertificate()
@@ -235,7 +246,7 @@ func (cd *CaddyDepot) CA(pass []byte) ([]*x509.Certificate, *rsa.PrivateKey, err
 		return nil, nil, err
 	}
 	//rootProfile.SetSubjectPrivateKey(privatekey)
-	rootProfile.Subject().NotAfter = time.Now().Add(time.Hour * 1) // TODO: make configurable
+	rootProfile.Subject().NotAfter = time.Now().Add(time.Hour * 3) // TODO: make configurable
 
 	rootProfile.GenerateKeyPair("RSA", "", 4096)
 
@@ -265,6 +276,12 @@ func (cd *CaddyDepot) CA(pass []byte) ([]*x509.Certificate, *rsa.PrivateKey, err
 	fmt.Println(fmt.Sprintf("%#+v", cert.PublicKey))
 
 	//return []*x509.Certificate{rootCert}, privatekey, nil
+
+	cd.h.cert = cert
+	cd.h.privKey = rpk
+
+	fmt.Println(cert.NotAfter)
+
 	return []*x509.Certificate{cert}, rpk, nil
 }
 
