@@ -20,10 +20,10 @@ import (
 	"crypto/x509"
 	"fmt"
 	"math/big"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
@@ -31,8 +31,6 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"go.uber.org/zap"
-
-	x509cli "github.com/smallstep/cli/crypto/x509util"
 
 	//"github.com/smallstep/cli/crypto/x509util"
 
@@ -96,7 +94,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	}
 
 	svcOptions := []scepserver.ServiceOption{
-		scepserver.ChallengePassword("password"), // This seems to be a shared secret, but for all clients?
+		//scepserver.ChallengePassword("password"), // This seems to be a shared secret, but for all clients?
 		// scepserver.WithCSRVerifier(csrVerifier),
 		// scepserver.CAKeyPassword([]byte(*flCAPass)),
 		scepserver.AllowRenewal(14),   // 14 days
@@ -211,28 +209,38 @@ func (cd *CaddyDepot) CA(pass []byte) ([]*x509.Certificate, *rsa.PrivateKey, err
 
 	fmt.Println("ca")
 
-	rootCert := cd.ca.RootCertificate()
-
+	//intermediateCert := cd.ca.IntermediateCertificate()
+	//intermediateKey := cd.ca.IntermediateKey()
 	rootKey, err := cd.ca.RootKey()
 	if err != nil {
 		return nil, nil, err
 	}
+
+	rootCert := cd.ca.RootCertificate()
+
+	// rk, ok := intermediateKey.(crypto.PrivateKey)
+	// if !ok {
+	// 	return nil, nil, fmt.Errorf("no valid root key")
+	// }
 
 	rk, ok := rootKey.(crypto.PrivateKey)
 	if !ok {
 		return nil, nil, fmt.Errorf("no valid root key")
 	}
 
-	fmt.Println(rootCert)
-	fmt.Println("rk")
-	fmt.Println(rk)
-
-	// rpk, ok := rk.(rsa.PrivateKey)
-	// if !ok {
-	// 	return nil, nil, fmt.Errorf("no valid rsa root key")
-	// }
+	//fmt.Println(intermediateKey)
+	// fmt.Println("rk")
+	// fmt.Println(rk)
 
 	fmt.Println(fmt.Sprintf("%T", rk)) // *ecdsa.PrivateKey
+
+	rpk, ok := rk.(*rsa.PrivateKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("no valid rsa root key")
+	}
+
+	//return []*x509.Certificate{rootCert, intermediateCert}, &rpk, nil
+	return []*x509.Certificate{rootCert}, rpk, nil
 
 	// privatekey, err := rsa.GenerateKey(rand.Reader, 4096)
 	// if err != nil {
@@ -241,62 +249,65 @@ func (cd *CaddyDepot) CA(pass []byte) ([]*x509.Certificate, *rsa.PrivateKey, err
 	// }
 	//publickey := &privatekey.PublicKey
 
-	rootProfile, err := x509cli.NewRootProfile("localhost")
-	if err != nil {
-		return nil, nil, err
-	}
-	//rootProfile.SetSubjectPrivateKey(privatekey)
-	rootProfile.Subject().NotAfter = time.Now().Add(time.Hour * 3) // TODO: make configurable
+	// rootProfile, err := x509cli.NewRootProfile("localhost")
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
+	// //rootProfile.SetSubjectPrivateKey(privatekey)
+	// rootProfile.Subject().NotAfter = time.Now().Add(time.Hour * 3) // TODO: make configurable
 
-	rootProfile.GenerateKeyPair("RSA", "", 4096)
+	// rootProfile.GenerateKeyPair("RSA", "", 4096)
 
 	// pub, priv, err := x509cli.GenerateKeyPair("RSA", "", 4096)
 	// if err != nil {
 	// 	return nil, nil, err
 	// }
 
-	certBytes, err := rootProfile.CreateCertificate()
-	if err != nil {
-		return nil, nil, err
-	}
+	// certBytes, err := rootProfile.CreateCertificate()
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	privKey := rootProfile.SubjectPrivateKey()
-	cert, err := x509.ParseCertificate(certBytes)
+	// privKey := rootProfile.SubjectPrivateKey()
+	// cert, err := x509.ParseCertificate(certBytes)
 
-	fmt.Println(privKey)
-	fmt.Println(fmt.Sprintf("%T", privKey))
+	// fmt.Println(privKey)
+	// fmt.Println(fmt.Sprintf("%T", privKey))
 
-	rpk, ok := privKey.(*rsa.PrivateKey)
-	if !ok {
-		return nil, nil, fmt.Errorf("no valid rsa root key")
-	}
+	// rpk, ok := privKey.(*rsa.PrivateKey)
+	// if !ok {
+	// 	return nil, nil, fmt.Errorf("no valid rsa root key")
+	// }
 
-	fmt.Println(cert)
-	fmt.Println(fmt.Sprintf("%T", cert))
-	fmt.Println(fmt.Sprintf("%#+v", cert.PublicKey))
+	// fmt.Println(cert)
+	// fmt.Println(fmt.Sprintf("%T", cert))
+	// fmt.Println(fmt.Sprintf("%#+v", cert.PublicKey))
 
-	//return []*x509.Certificate{rootCert}, privatekey, nil
+	// //return []*x509.Certificate{rootCert}, privatekey, nil
 
-	cd.h.cert = cert
-	cd.h.privKey = rpk
+	// cd.h.cert = cert
+	// cd.h.privKey = rpk
 
-	fmt.Println(cert.NotAfter)
+	// fmt.Println(cert.NotAfter)
 
-	return []*x509.Certificate{cert}, rpk, nil
+	// return []*x509.Certificate{cert}, rpk, nil
 }
 
 func (cd *CaddyDepot) Put(name string, crt *x509.Certificate) error {
 	fmt.Println("put")
+	fmt.Println(name)
 	return nil
 }
 
 func (cd *CaddyDepot) Serial() (*big.Int, error) {
 	fmt.Println("serial")
-	return nil, nil
+	r := big.NewInt(int64(rand.Int63()))
+	return r, nil
 }
 
 func (cd *CaddyDepot) HasCN(cn string, allowTime int, cert *x509.Certificate, revokeOldCertificate bool) (bool, error) {
 	fmt.Println("hascn")
+	fmt.Println(cn)
 	return false, nil
 }
 

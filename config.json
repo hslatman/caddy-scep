@@ -16,7 +16,7 @@
         "servers": {
           "scep": {
             "listen": [
-              "127.0.0.1:9080"
+              "scep.local.example.com:9080"
             ],
             "automatic_https": {
               "disable_redirects": true
@@ -33,7 +33,9 @@
                 ],
                 "handle": [
                   {
-                    "handler": "scep"
+                    "handler": "scep",
+                    "ca": "scep-ca",
+                    "host": "scep.local.example.com"
                   }
                 ]
               }
@@ -41,7 +43,7 @@
           },
           "server1": {
             "listen": [
-              "127.0.0.1:9443"
+              "scep.local.example.com:9443"
             ],
             "automatic_https": {
               "disable_redirects": true
@@ -80,13 +82,31 @@
         "automation": {
           "policies": [
             {
-              "subjects": ["localhost"],
+              "subjects": ["scep.local.example.com"],
               "issuers": [{
-                "module": "internal"
+                "module": "internal",
+                "ca": "scep-ca"
               }],
+              "key_type": "rsa4096",
               "on_demand": true
             }
           ]
+        }
+      },
+      "pki": {
+        "certificate_authorities": {
+          "local": {},
+          "scep-ca": {
+            "name": "SCEP CA Example",
+            "root_common_name": "SCEP CA Root Example",
+            "intermediate_common_name": "SCEP CA Intermediate Example",
+            "install_trust": false,
+            "root": {
+              "certificate": "/path/to/ca/root.crt",
+              "private_key": "/path/to/ca/root.key",
+              "format": "pem_file"
+            }
+          }
         }
       }
     }
